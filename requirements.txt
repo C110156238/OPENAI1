@@ -1,4 +1,4 @@
-line-bot-sdk
+line-bot-sdk==1.18.8
 flask
-openai
-gunicorn
+pymongo==3.8.0
+dnspython==1.16.0

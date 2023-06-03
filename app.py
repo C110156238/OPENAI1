@@ -1,38 +1,25 @@
 from flask import Flask, request, abort
+from linebot import LineBotApi, WebhookHandler
+from linebot.exceptions import InvalidSignatureError
+from linebot.models import MessageEvent, TextMessage, TextSendMessage
+from linebot.models import * 
 
-from linebot import (
-    LineBotApi, WebhookHandler
-)
-from linebot.exceptions import (
-    InvalidSignatureError
-)
-from linebot.models import *
+#======呼叫檔案內容=====
+from mongodb_function import *
+#======python的函數庫==========
+import  os,json,requests #======python的函數庫==========
 
-#======python的函數庫==========
-import tempfile, os
-import datetime
-import openai
-import time
-#======python的函數庫==========
+from flask import Flask, request
+
+# 載入 LINE Message API 相關函式庫
+
 
 app = Flask(__name__)
 static_tmp_path = os.path.join(os.path.dirname(__file__), 'static', 'tmp')
 # Channel Access Token
-line_bot_api = LineBotApi(os.getenv('CHANNEL_ACCESS_TOKEN'))
+line_bot_api = LineBotApi('ix+FBt4qAcThr9OfcHGJndzIg3JrwWF1IpNrcFs/lTt+wq97kUuCe+RcG8sfkizlfrgaUORkIq7OGBZJ5GiMXQZv2TA8y12UmfTkWapMplA0IYL5tVS5owaruUANUufeRAQlt2zjLmrTcp2gjK/2ugdB04t89/1O/w1cDnyilFU=')
 # Channel Secret
-handler = WebhookHandler(os.getenv('CHANNEL_SECRET'))
-# OPENAI API Key初始化設定
-openai.api_key = os.getenv('OPENAI_API_KEY')
-
-
-def GPT_response(text):
-    # 接收回應
-    response = openai.Completion.create(model="text-davinci-003", prompt=text, temperature=0.5, max_tokens=500)
-    print(response)
-    # 重組回應
-    answer = response['choices'][0]['text'].replace('。','')
-    return answer
-
+handler = WebhookHandler('85919715906634b7a5064bc0c3b9b8f5')
 
 # 監聽所有來自 /callback 的 Post Request
 @app.route("/callback", methods=['POST'])
@@ -41,6 +28,7 @@ def callback():
     signature = request.headers['X-Line-Signature']
     # get request body as text
     body = request.get_data(as_text=True)
+    write_one_data(eval(body.replace('false','False')))#寫入資料庫
     app.logger.info("Request body: " + body)
     # handle webhook body
     try:
@@ -49,14 +37,78 @@ def callback():
         abort(400)
     return 'OK'
 
+headers = {'Authorization':'ix+FBt4qAcThr9OfcHGJndzIg3JrwWF1IpNrcFs/lTt+wq97kUuCe+RcG8sfkizlfrgaUORkIq7OGBZJ5GiMXQZv2TA8y12UmfTkWapMplA0IYL5tVS5owaruUANUufeRAQlt2zjLmrTcp2gjK/2ugdB04t89/1O/w1cDnyilFU='}
+
+req = requests.request('POST', 'https://api.line.me/v2/bot/user/all/richmenu/你的圖文選單 ID', headers=headers)
+
+print(req.text)
 
 # 處理訊息
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     msg = event.message.text
-    GPT_answer = GPT_response(msg)
-    print(GPT_answer)
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(GPT_answer))
+    #======MongoDB======
+
+    if '@u' in msg:
+        params = (msg.split(' '))
+        if len(params) != 3:
+            text = '請輸入格式 "@u <id> <修改的文字內容>"\n'
+            
+            all_messages = read_all_message()
+            for message in all_messages:
+                _id = message['_id']
+                message_content = message['events'][0]['message']['text']
+                text += f'id:{_id} 原始訊息:{message_content}\n'
+            message = TextSendMessage(text=text)
+            return line_bot_api.reply_message(event.reply_token, message)
+        _id = params[1]
+        new_message = params[2]
+        data = get_message(_id)
+        if data == None:
+            text = '此 ID 不存在，修改失敗'
+        else:
+            data['events'][0]['message']['text'] = new_message
+            print(data)
+            update_message(_id, data)
+            text = '修改成功'
+        message = TextSendMessage(text=text)
+        return line_bot_api.reply_message(event.reply_token, message)
+
+    elif '@rec' in msg:
+        datas = read_chat_records()
+        print(type(datas))
+        n = 0
+        text_list = []
+        for data in datas:
+            if '@' in data:
+                text_list.append(data)
+            else:
+                text_list.append(data)
+            n+=1
+        text_list.append(f'一共{n}則訊息')
+        data_text = '\n'.join(text_list)
+        message = TextSendMessage(text=data_text[:5000])
+        line_bot_api.reply_message(event.reply_token, message)
+
+    elif '@r' in msg:
+        datas = read_many_datas()
+        datas_len = len(datas)
+        message = TextSendMessage(text=f'資料數量，一共{datas_len}條')
+        line_bot_api.reply_message(event.reply_token, message)
+
+    elif '@c' in msg:
+        datas = col_find('events')
+        message = TextSendMessage(text=str(datas))
+        line_bot_api.reply_message(event.reply_token, message)
+
+    elif '@d' in msg:
+        text = delete_all_data()
+        message = TextSendMessage(text=text)
+        line_bot_api.reply_message(event.reply_token, message)
+
+    else:
+        message = TextSendMessage(text=msg)
+        line_bot_api.reply_message(event.reply_token, message)
 
 @handler.add(PostbackEvent)
 def handle_message(event):
@@ -72,8 +124,42 @@ def welcome(event):
     message = TextSendMessage(text=f'{name}歡迎加入')
     line_bot_api.reply_message(event.reply_token, message)
         
-        
-import os
+# @app.route("/", methods=['POST'])
+# def linebot():
+#     body = request.get_data(as_text=True)                    # 取得收到的訊息內容
+#     try:
+#         json_data = json.loads(body)                         # json 格式化訊息內容
+#         access_token = 'ix+FBt4qAcThr9OfcHGJndzIg3JrwWF1IpNrcFs/lTt+wq97kUuCe+RcG8sfkizlfrgaUORkIq7OGBZJ5GiMXQZv2TA8y12UmfTkWapMplA0IYL5tVS5owaruUANUufeRAQlt2zjLmrTcp2gjK/2ugdB04t89/1O/w1cDnyilFU='                                    # 你的 Access Token
+#         secret = '85919715906634b7a5064bc0c3b9b8f5'                                          # 你的 Channel Secret
+#         line_bot_api = LineBotApi(access_token)              # 確認 token 是否正確
+#         handler = WebhookHandler(secret)                     # 確認 secret 是否正確
+#         signature = request.headers['X-Line-Signature']      # 加入回傳的 headers
+#         handler.handle(body, signature)                      # 綁定訊息回傳的相關資訊
+#         tk = json_data['events'][0]['replyToken']            # 取得回傳訊息的 Token
+#         type = json_data['events'][0]['message']['type']     # 取得 LINE 收到的訊息類型
+#         # 判斷如果是文字
+#         if type=='text':
+#             msg = json_data['events'][0]['message']['text']  # 取得 LINE 收到的文字訊息
+#             reply = msg
+#         # 判斷如果是圖片
+#         elif type == 'image':
+#             msgID = json_data['events'][0]['message']['id']  # 取得訊息 id
+#             message_content = line_bot_api.get_message_content(msgID)  # 根據訊息 ID 取得訊息內容
+#             # 在同樣的資料夾中建立以訊息 ID 為檔名的 .jpg 檔案
+#             with open(f'{msgID}.jpg', 'wb') as fd:
+#                 fd.write(message_content.content)             # 以二進位的方式寫入檔案
+#             reply = '圖片儲存完成！'                             # 設定要回傳的訊息
+#         else:
+#             reply = '你傳的不是文字或圖片呦～'
+#         print(reply)
+#         line_bot_api.reply_message(tk,TextSendMessage(reply))  # 回傳訊息
+#     except:
+#         print(body)                                            # 如果發生錯誤，印出收到的內容
+#     return 'OK'                                                # 驗證 Webhook 使用，不能省略
+
+# if __name__ == "__main__":
+#     app.run()
+
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=True)
